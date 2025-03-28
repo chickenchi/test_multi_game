@@ -1,11 +1,12 @@
 "use client";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import styled from "styled-components";
 import { useGameCharacter } from "@/hooks/useGameCharacter";
-import { get, ref, set, onValue, off } from "firebase/database";
+import { useChat } from "@/hooks/useChat";
+import { get, ref, set, onValue, off, update } from "firebase/database";
 
 const GameContainer = styled.div`
   position: relative;
@@ -43,12 +44,27 @@ const Ground = styled.div`
   background-color: #8b4513;
 `;
 
-const NicknameDisplay = styled.div`
+const ChatInput = styled.input`
   position: absolute;
-  top: 20px;
-  left: 20px;
-  color: white;
-  font-size: 1.25rem;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  padding: 5px;
+  border: none;
+  border-radius: 5px;
+`;
+
+const ChatBubble = styled.div`
+  position: absolute;
+  top: -50px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: white;
+  padding: 5px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+  font-size: 12px;
 `;
 
 interface PlayerState {
@@ -57,7 +73,7 @@ interface PlayerState {
   vy: number;
   isJumping: boolean;
   id: string;
-  nickname?: string;
+  nickname: string;
 }
 
 const Game = () => {
@@ -74,6 +90,11 @@ const Game = () => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const { character, updateCharacter } = useGameCharacter(roomId, userId || "");
+  const { chatMessage, setChatMessage, playerChats, sendChatMessage } = useChat(
+    roomId,
+    userId || ""
+  );
+  const [showChatInput, setShowChatInput] = useState(false);
 
   const gravity = 0.2;
   const jumpForce = 6;
@@ -96,49 +117,60 @@ const Game = () => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         router.push("/");
-      } else {
-        setUserId(user.uid);
-        setNickname(user.displayName || "Anonymous");
+        return;
+      }
 
-        const userRef = ref(db, `characters/${user.uid}`);
-        const snapshot = await get(userRef);
+      setUserId(user.uid);
 
-        if (snapshot.exists()) {
-          const userData = snapshot.val();
-          if (userData.x && userData.y) {
-            updateCharacter(userData);
-          }
-        } else {
-          const newCharacter = {
-            x: 100,
-            y: 0,
-            vy: 0,
-            isJumping: false,
-            nickname: user.displayName || "Anonymous",
-          };
-          setNickname(newCharacter.nickname);
-          await set(userRef, newCharacter);
-          updateCharacter(newCharacter);
+      const userRef = ref(db, `rooms/${roomId}/characters/${user.uid}`);
+      const snapshot = await get(userRef);
+
+      if (snapshot.exists()) {
+        const userData = snapshot.val();
+        console.log(userData);
+
+        // 기존 데이터 유지하면서 필요한 부분만 업데이트
+        if (typeof userData.x === "number" && typeof userData.y === "number") {
+          setNickname(userData.nickname || user.displayName || "Anonymous");
+          updateCharacter(userData);
         }
+      } else {
+        // 새 캐릭터 정보 생성
+        const newCharacter = {
+          userId: user.uid,
+          x: 100,
+          y: 0,
+          vy: 0,
+          isJumping: false,
+          nickname: user.displayName || "Anonymous",
+        };
+
+        // 상태 업데이트 후 DB에 저장
+        setNickname(newCharacter.nickname);
+        await set(userRef, newCharacter);
+        updateCharacter(newCharacter);
       }
     });
 
     return () => unsubscribe();
-  }, [router]);
+  }, [roomId, router]); // 의존성 배열 유지
 
   useEffect(() => {
-    const playersRef = ref(db, `rooms/${roomId}/players`);
+    const playersRef = ref(db, `rooms/${roomId}/characters`);
     const playersListener = onValue(playersRef, (snapshot) => {
       const playersData = snapshot.val();
       if (playersData) {
-        const playersArray = Object.keys(playersData).map((id) => ({
-          id,
-          x: playersData[id].x,
-          y: playersData[id].y,
-          vy: playersData[id].vy,
-          isJumping: playersData[id].isJumping,
-          nickname: playersData[id].nickname,
-        }));
+        const playersArray = Object.keys(playersData)
+          .map((id) => ({
+            id,
+            x: playersData[id].x,
+            y: playersData[id].y,
+            vy: playersData[id].vy,
+            isJumping: playersData[id].isJumping,
+            nickname: playersData[id].nickname || "Anonymous",
+          }))
+          .filter((player) => player.id !== userId); // 자신의 캐릭터를 제외
+
         setOtherPlayers(playersArray);
       }
     });
@@ -146,13 +178,19 @@ const Game = () => {
     return () => {
       off(playersRef, "value", playersListener);
     };
-  }, [roomId]);
+  }, [roomId, userId]);
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (["ArrowLeft", "ArrowRight", "ArrowUp"].includes(e.key)) {
-      setKeys((prev) => ({ ...prev, [e.key]: true }));
-    }
-  }, []);
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (["ArrowLeft", "ArrowRight", "ArrowUp"].includes(e.key)) {
+        setKeys((prev) => ({ ...prev, [e.key]: true }));
+      } else if (e.key === "/" && !showChatInput) {
+        e.preventDefault();
+        setShowChatInput(true);
+      }
+    },
+    [showChatInput]
+  );
 
   const handleKeyUp = useCallback((e: KeyboardEvent) => {
     if (["ArrowLeft", "ArrowRight", "ArrowUp"].includes(e.key)) {
@@ -193,9 +231,8 @@ const Game = () => {
           checkCollision(
             {
               ...character,
-              x: newX,
-              y: newY,
               id: userId || "",
+              nickname: nickname || "Anonymous",
             },
             player
           )
@@ -223,7 +260,8 @@ const Game = () => {
     }
 
     updateCharacter({
-      ...character,
+      userId: userId,
+      nickname: nickname,
       x: newX,
       y: newY,
       vy: newVy,
@@ -231,8 +269,9 @@ const Game = () => {
     });
 
     if (userId) {
-      const playerRef = ref(db, `rooms/${roomId}/players/${userId}`);
-      set(playerRef, {
+      const playerRef = ref(db, `rooms/${roomId}/characters/${userId}`);
+      update(playerRef, {
+        userId: userId,
         x: newX,
         y: newY,
         vy: newVy,
@@ -251,6 +290,8 @@ const Game = () => {
   ]);
 
   useEffect(() => {
+    if (!userId || !character) return;
+
     let lastTime = 0;
     let animationFrameId: number;
 
@@ -272,6 +313,11 @@ const Game = () => {
       <CharacterContainer style={{ left: character.x, bottom: character.y }}>
         <CharacterSprite />
         <CharacterNickname>{nickname}</CharacterNickname>
+        {playerChats.find((chat) => chat.id === userId)?.message && (
+          <ChatBubble>
+            {playerChats.find((chat) => chat.id === userId)?.message}
+          </ChatBubble>
+        )}
       </CharacterContainer>
       {otherPlayers.map((player) => (
         <CharacterContainer
@@ -287,8 +333,28 @@ const Game = () => {
             }}
           />
           <CharacterNickname>{player.nickname}</CharacterNickname>
+          {playerChats.find((chat) => chat.id === player.id)?.message && (
+            <ChatBubble>
+              {playerChats.find((chat) => chat.id === player.id)?.message}
+            </ChatBubble>
+          )}
         </CharacterContainer>
       ))}
+      {showChatInput && (
+        <ChatInput
+          value={chatMessage}
+          onChange={(e) => setChatMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              sendChatMessage(chatMessage);
+              setChatMessage("");
+              setShowChatInput(false);
+            }
+          }}
+          onBlur={() => setShowChatInput(false)}
+          autoFocus
+        />
+      )}
     </GameContainer>
   );
 };

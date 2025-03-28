@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, onValue, push, set } from "firebase/database";
+import { ref, onValue, update } from "firebase/database";
 
 // 게임 캐릭터 상태를 관리하는 커스텀 훅
 export function useGameCharacter(roomId: string, userId: string) {
@@ -30,10 +30,9 @@ export function useGameCharacter(roomId: string, userId: string) {
     return () => unsubscribe();
   }, [roomId, userId]);
 
-  // 캐릭터 상태를 업데이트하는 함수
-  const updateCharacter = async (newCharacter: { x: number; y: number; vy: number; isJumping: boolean }) => {
-    const characterRef = ref(db, `rooms/${roomId}/characters/${userId}`);
-    await set(characterRef, newCharacter);  // 새로운 캐릭터 상태 저장
+  const updateCharacter = async (newCharacter: { userId: string | null, x: number; y: number; vy: number; isJumping: boolean, nickname: string | null }) => {
+    const characterRef = ref(db, `rooms/${roomId}/characters/${newCharacter.userId}`);
+    await update(characterRef, newCharacter);
   };
 
   return { character, updateCharacter };
