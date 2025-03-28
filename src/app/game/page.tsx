@@ -20,7 +20,7 @@ const CharacterContainer = styled.div`
 
 const CharacterSprite = styled.div`
   width: 60px;
-  height: 80px;
+  height: 60px;
   background-color: #f87171;
 `;
 
@@ -80,6 +80,17 @@ const Game = () => {
   const moveSpeed = 3;
   const groundY = 50;
   const frameRate = 1000 / 60;
+  const characterWidth = 60;
+  const characterHeight = 60;
+
+  const checkCollision = (char1: PlayerState, char2: PlayerState) => {
+    return (
+      char1.x < char2.x + characterWidth &&
+      char1.x + characterWidth > char2.x &&
+      char1.y < char2.y + characterHeight &&
+      char1.y + characterHeight > char2.y
+    );
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -174,7 +185,33 @@ const Game = () => {
     newVy -= gravity;
     newY += newVy;
 
-    if (newY <= groundY) {
+    // 다른 플레이어와의 충돌 검사
+    let standingOnPlayer = false;
+    for (const player of otherPlayers) {
+      if (player.id !== userId) {
+        if (
+          checkCollision(
+            {
+              ...character,
+              x: newX,
+              y: newY,
+              id: userId || "",
+            },
+            player
+          )
+        ) {
+          if (character.y >= player.y + characterHeight - 5) {
+            newY = player.y + characterHeight;
+            newVy = 0;
+            newJumping = false;
+            standingOnPlayer = true;
+          }
+        }
+      }
+    }
+
+    // 바닥 충돌 검사 (다른 플레이어 위에 서있지 않을 때만)
+    if (!standingOnPlayer && newY <= groundY) {
       newY = groundY;
       newVy = 0;
       newJumping = false;
@@ -182,7 +219,7 @@ const Game = () => {
 
     if (containerRef.current) {
       const containerWidth = containerRef.current.clientWidth;
-      newX = Math.max(0, Math.min(newX, containerWidth - 60));
+      newX = Math.max(0, Math.min(newX, containerWidth - characterWidth));
     }
 
     updateCharacter({
@@ -203,7 +240,15 @@ const Game = () => {
         nickname,
       });
     }
-  }, [character, keys, updateCharacter, userId, roomId, nickname]);
+  }, [
+    character,
+    keys,
+    updateCharacter,
+    userId,
+    roomId,
+    nickname,
+    otherPlayers,
+  ]);
 
   useEffect(() => {
     let lastTime = 0;
@@ -224,6 +269,10 @@ const Game = () => {
   return (
     <GameContainer ref={containerRef}>
       <Ground />
+      <CharacterContainer style={{ left: character.x, bottom: character.y }}>
+        <CharacterSprite />
+        <CharacterNickname>{nickname}</CharacterNickname>
+      </CharacterContainer>
       {otherPlayers.map((player) => (
         <CharacterContainer
           key={player.id}
